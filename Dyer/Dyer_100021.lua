@@ -27,7 +27,7 @@ http://creativecommons.org/licenses/by-nc-sa/4.0/legalcode
 local ADDON_NAME = "Dyer"
 
 local dyesList = ZO_SortFilterList:Subclass()
-dyesManager = {}
+local dyesManager = {}
 local dyeStampsShown
 local rightKeybindStripDescriptor
 
@@ -1275,7 +1275,7 @@ end
 
 function dyesList:FilterScrollList()
 	
-	scrollData = ZO_ScrollList_GetDataList(self.list)
+	local scrollData = ZO_ScrollList_GetDataList(self.list)
 	ZO_ClearNumericallyIndexedTable(scrollData)
 	
 	local editText = ZO_RESTYLE_KEYBOARD.contentSearchEditBox:GetText()
@@ -1297,11 +1297,11 @@ function dyesList:FilterScrollList()
 	
 	local anyDyestampsToShow = next(scrollData) ~= nil
 	self.noDyesLabel:SetHidden(anyDyestampsToShow)
-	
+		
 end
 
 local function UpdateDyeStampsLayout()
-	dyesManager:RefreshData()
+	dyesManager:RefreshFilters()
 end
 
 function Dyer_HoverRow(control)
