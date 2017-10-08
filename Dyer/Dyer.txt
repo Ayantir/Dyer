@@ -7,7 +7,7 @@
 ## Title: Dyer
 ## Description: Be pretty !
 ## Author: Ayantir
-## Version: 10
+## Version: 11
 ## APIVersion: 100020 100021
 ## SavedVariables: DYER
 

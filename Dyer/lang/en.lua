@@ -12,6 +12,8 @@ local strings = {
 	DYER_DELETE_DYESTAMP					= "Delete Dyestamp",
 	DYER_SET_LABEL							= "Set",
 	DYER_INVALID_MODE_FOR_SET			= "Invalid mode for this set",
+	DYER_REMOVE_FROM_RANDOM				= "Remove from Random",
+	DYER_ADD_FROM_RANDOM					= "Add back to Random",
 }
 
 for stringId, stringValue in pairs(strings) do
