@@ -30,10 +30,16 @@ local dyesList = ZO_SortFilterList:Subclass()
 local dyesManager = {}
 local dyeStampsShown
 local rightKeybindStripDescriptor
+local dyesAvailableForRandomness
 
 local db
 local defaults = {
-	s = {} -- Saved Sets
+	s = {}, -- Saved Sets
+	n = {}, -- No Random Dyes
+	a = {
+		[RESTYLE_MODE_EQUIPMENT] = {},
+		[RESTYLE_MODE_COLLECTIBLE] = {},
+	}, -- No Random Slots
 }
 
 local FAVORITE_MODE_DYESLOT = 1
@@ -1097,6 +1103,85 @@ local function GetDyeStampQualityColor(itemId)
 	return GetItemQualityColor(GetItemLinkQuality(itemLink))
 end
 
+local function BuildDyesAvailableForRandomness()
+	
+	dyesAvailableForRandomness = {}
+	
+	for dyeIndex = 1, GetNumDyes() do
+		local _, known, _, _, _, _, _, _, _, dyeId = GetDyeInfo(dyeIndex)
+		if known and not db.n[dyeId] then
+			table.insert(dyesAvailableForRandomness, dyeId)
+		end
+	end
+	
+end
+
+local function OnDyeIdMouseUp(swatch, button, upInside)
+	if upInside then
+		if button == MOUSE_BUTTON_INDEX_LEFT then
+			if not swatch.locked then
+				ZO_DYEING_KEYBOARD:SwitchToDyeingWithDyeId(swatch.dyeId)
+			end
+		elseif button == MOUSE_BUTTON_INDEX_RIGHT then
+			local achievementName = GetAchievementInfo(swatch.achievementId)
+			if achievementName ~= "" then
+				ClearMenu()
+				AddMenuItem(GetString(SI_DYEING_SWATCH_VIEW_ACHIEVEMENT), function() ZO_DYEING_KEYBOARD:AttemptExit(swatch.achievementId) end)
+				if db.n[swatch.dyeId] then
+					AddMenuItem(GetString(DYER_ADD_FROM_RANDOM), function()
+						db.n[swatch.dyeId] = nil
+						swatch:SetColor(ZO_DYEING_FRAME_INDEX, 1, 1, 1, 1)
+						BuildDyesAvailableForRandomness()
+					end)
+				else
+					AddMenuItem(GetString(DYER_REMOVE_FROM_RANDOM), function()
+						db.n[swatch.dyeId] = true
+						swatch:SetColor(ZO_DYEING_FRAME_INDEX, 1, 0, 0, 1)
+					end)
+				end
+				ShowMenu(swatch)
+				BuildDyesAvailableForRandomness()
+			end
+		end
+	end
+end
+
+function ZO_DYEING_KEYBOARD:LayoutDyes()
+
+	local SWATCHES_LAYOUT_OPTIONS = 
+	{
+		padding = 6,
+		leftMargin = 27,
+		topMargin = 18,
+		rightMargin = 0,
+		bottomMargin = 0,
+		selectionScale = ZO_DYEING_SWATCH_SELECTION_SCALE,
+	}
+	
+	ZO_DYEING_KEYBOARD.dyeLayoutDirty = false
+	
+	local _, _, unlockedDyeIds, dyeIdToSwatch = ZO_Dyeing_LayoutSwatches(ZO_DYEING_KEYBOARD.savedVars.showLocked, ZO_DYEING_KEYBOARD.savedVars.sortStyle, ZO_DYEING_KEYBOARD.swatchPool, ZO_DYEING_KEYBOARD.headerPool, SWATCHES_LAYOUT_OPTIONS, ZO_DYEING_KEYBOARD.pane, true)
+	
+	ZO_DYEING_KEYBOARD.unlockedDyeIds = unlockedDyeIds
+	ZO_DYEING_KEYBOARD.dyeIdToSwatch = dyeIdToSwatch
+	
+	for dyeId, swatch in pairs(ZO_DYEING_KEYBOARD.dyeIdToSwatch) do
+		swatch:SetHandler("OnMouseUp", OnDyeIdMouseUp)
+		if db.n[dyeId] then
+			swatch:SetColor(ZO_DYEING_FRAME_INDEX, 1, 0, 0, 1)
+		else
+			swatch:SetColor(ZO_DYEING_FRAME_INDEX, 1, 1, 1, 1)
+		end
+	end
+	
+	local anyDyesToSwatch = next(dyeIdToSwatch) ~= nil
+	ZO_DYEING_KEYBOARD.noDyesLabel:SetHidden(anyDyesToSwatch)
+	if ZO_DYEING_KEYBOARD.selectedDyeId then
+		ZO_DYEING_KEYBOARD:SetSelectedDyeId(ZO_DYEING_KEYBOARD.selectedDyeId, true)
+	end
+	
+end
+
 function dyesList:New(control)
 	
 	ZO_SortFilterList.InitializeSortFilterList(self, control)
@@ -1110,6 +1195,8 @@ function dyesList:New(control)
 	}
 	
  	self.masterList = {}
+	
+	self.noDyesLabel = control:GetNamedChild("NoDyesLabel")
 	
  	ZO_ScrollList_AddDataType(self.list, 1, "DyerRowTemplate", 52, function(control, data) self:SetupEntry(control, data) end)
  	ZO_ScrollList_EnableHighlight(self.list, "ZO_ThinListHighlight")
@@ -1157,9 +1244,12 @@ function dyesList:SetupEntry(control, data)
 	control.secondary.achievementId = achievementId2
 	control.accent.achievementId = achievementId3
 	
-	control.primary:SetSurfaceHidden(ZO_DYEING_LOCK_INDEX, data.primaryDyeIdKnown)
-	control.secondary:SetSurfaceHidden(ZO_DYEING_LOCK_INDEX, data.secondaryDyeIdKnown)
-	control.accent:SetSurfaceHidden(ZO_DYEING_LOCK_INDEX, data.accentDyeIdKnown)
+	control.primary:SetSurfaceHidden(ZO_DYEING_LOCK_INDEX, data.primaryDyeIdKnown or data.isCrownStoreDyeStamp)
+	control.secondary:SetSurfaceHidden(ZO_DYEING_LOCK_INDEX, data.secondaryDyeIdKnown or data.isCrownStoreDyeStamp)
+	control.accent:SetSurfaceHidden(ZO_DYEING_LOCK_INDEX, data.accentDyeIdKnown or data.isCrownStoreDyeStamp)
+	
+	local crownStore = GetControl(control, "CrownStore")
+	crownStore:SetHidden(not data.isCrownStoreDyeStamp)
 	
 	ZO_SortFilterList.SetupRow(self, control, data)
 	
@@ -1179,13 +1269,13 @@ function dyesList:BuildMasterList()
 			primaryDyeId = data.p
 			secondaryDyeId = data.s
 			accentDyeId = data.a
-		else
+		elseif NonContiguousCount(data.d) > 0 then
 			
 			mode = data.m
 			
-			local referenceSlot = DYEABLE_SLOT_CHEST
+			local referenceSlot = EQUIP_SLOT_CHEST
 			if mode == FAVORITE_MODE_WCOLLECTIBLE then
-				referenceSlot = DYEABLE_SLOT_COSTUME
+				referenceSlot = COLLECTIBLE_CATEGORY_TYPE_COSTUME
 			end
 			
 			primaryDyeId = data.d[referenceSlot].p
@@ -1198,6 +1288,10 @@ function dyesList:BuildMasterList()
 		secondaryDyeIdKnown = IsDyeIdKnown(secondaryDyeId)
 		accentDyeIdKnown = IsDyeIdKnown(accentDyeId)
 		
+		local primaryDyeName = GetDyeInfoById(primaryDyeId)
+		local secondaryDyeName = GetDyeInfoById(secondaryDyeId)
+		local accentDyeName = GetDyeInfoById(accentDyeId)
+		
 		if primaryDyeIdKnown and secondaryDyeIdKnown and accentDyeIdKnown then
 			table.insert(self.masterList, {
 				name = data.n,
@@ -1208,6 +1302,9 @@ function dyesList:BuildMasterList()
 				primaryDyeIdKnown = primaryDyeIdKnown,
 				secondaryDyeIdKnown = secondaryDyeIdKnown,
 				accentDyeIdKnown = accentDyeIdKnown,
+				primaryDyeName = string.lower(primaryDyeName),
+				secondaryDyeName = string.lower(secondaryDyeName),
+				accentDyeName = string.lower(accentDyeName),
 				savedEntryIndex = savedEntryIndex,
 				slotDef = data.d
 			})
@@ -1221,9 +1318,10 @@ function dyesList:BuildMasterList()
 		
 			local name, primaryDyeId, secondaryDyeId, accentDyeId = GetDyeStampInfo(itemId)
 			
-			local _, _, _, _, achievementId1 = GetDyeInfoById(primaryDyeId)
-			local _, _, _, _, achievementId2 = GetDyeInfoById(secondaryDyeId)
-			local _, _, _, _, achievementId3 = GetDyeInfoById(accentDyeId)
+			local primaryDyeName, _, _, _, achievementId1 = GetDyeInfoById(primaryDyeId)
+			local secondaryDyeName, _, _, _, achievementId2 = GetDyeInfoById(secondaryDyeId)
+			local accentDyeName, _, _, _, achievementId3 = GetDyeInfoById(accentDyeId)
+			
 			local isCrownStoreDyeStamp = achievementId1 == 0 or achievementId2 == 0 or achievementId3 == 0
 
 			primaryDyeIdKnown = IsDyeIdKnown(primaryDyeId)
@@ -1240,6 +1338,10 @@ function dyesList:BuildMasterList()
 					primaryDyeIdKnown = primaryDyeIdKnown,
 					secondaryDyeIdKnown = secondaryDyeIdKnown,
 					accentDyeIdKnown = accentDyeIdKnown,
+					primaryDyeName = string.lower(primaryDyeName),
+					secondaryDyeName = string.lower(secondaryDyeName),
+					accentDyeName = string.lower(accentDyeName),
+					isCrownStoreDyeStamp = isCrownStoreDyeStamp,
 				})
 			end
 		end
@@ -1252,14 +1354,39 @@ function dyesList:SortScrollList()
 	table.sort(scrollData, self.sortFunction)
 end
 
+local function Sanitize(value)
+	return value:gsub("[-*+?^$().[%]%%]", "%%%0")
+end
+
 function dyesList:FilterScrollList()
+	
 	local scrollData = ZO_ScrollList_GetDataList(self.list)
 	ZO_ClearNumericallyIndexedTable(scrollData)
-
-	for i = 1, #self.masterList do
-		local data = self.masterList[i]
-		table.insert(scrollData, ZO_ScrollList_CreateDataEntry(1, data))
+	
+	local editText = ZO_RESTYLE_KEYBOARD.contentSearchEditBox:GetText()
+	local search = Sanitize(string.lower(editText))
+	
+	if search == "" or string.len(search) == 1 then
+		for i = 1, #self.masterList do
+			local data = self.masterList[i]
+			table.insert(scrollData, ZO_ScrollList_CreateDataEntry(1, data))
+		end
+	else
+		for i = 1, #self.masterList do
+			local data = self.masterList[i]
+			if string.find(string.lower(data.name), search) or string.find(data.primaryDyeName, search) or string.find(data.secondaryDyeName, search) or string.find(data.accentDyeName, search) then
+				table.insert(scrollData, ZO_ScrollList_CreateDataEntry(1, data))
+			end
+		end
 	end
+	
+	local anyDyestampsToShow = next(scrollData) ~= nil
+	self.noDyesLabel:SetHidden(anyDyestampsToShow)
+		
+end
+
+local function UpdateDyeStampsLayout()
+	dyesManager:RefreshFilters()
 end
 
 function Dyer_HoverRow(control)
@@ -1293,13 +1420,13 @@ function Dyer_ClickDye(control, button, upInside)
 	if upInside then
 		if button == MOUSE_BUTTON_INDEX_LEFT then
 			if control.isDyeKnown then
-				DYEING:SwitchToDyeingWithDyeId(control.dyeId)
+				ZO_DYEING_KEYBOARD:SwitchToDyeingWithDyeId(control.dyeId)
 			end
 		elseif button == MOUSE_BUTTON_INDEX_RIGHT then
 			local achievementName = GetAchievementInfo(control.achievementId)
 			if achievementName ~= "" then
 				ClearMenu()
-				AddMenuItem(GetString(SI_DYEING_SWATCH_VIEW_ACHIEVEMENT), function() DYEING:AttemptExit(control.achievementId) end)
+				AddMenuItem(GetString(SI_DYEING_SWATCH_VIEW_ACHIEVEMENT), function() ZO_RESTYLE_KEYBOARD:AttemptExit(control.achievementId) end)
 				ShowMenu(control)
 			end
 		end
@@ -1308,15 +1435,14 @@ end
 
 local function SaveFavoriteDyeStampWhole(name, mode)
 
-	local slots = ZO_Dyeing_GetSlotsForMode(DYEING.mode)
+	local slots = ZO_Dyeing_GetSlotsForMode(ZO_RESTYLE_KEYBOARD.mode)
 	
 	local slotDef = {}
 	for i, dyeableSlotData in ipairs(slots) do
-		local dyeableSlot = dyeableSlotData.dyeableSlot
-		local primaryDyeId, secondaryDyeId, accentDyeId = GetPendingSlotDyes(dyeableSlot)
-		slotDef[dyeableSlot] = {p = primaryDyeId, s = secondaryDyeId, a = accentDyeId}
+		local restyleSlotType = dyeableSlotData:GetRestyleSlotType()
+		local primaryDyeId, secondaryDyeId, accentDyeId = dyeableSlotData:GetPendingDyes()
+		slotDef[restyleSlotType] = {p = primaryDyeId, s = secondaryDyeId, a = accentDyeId}
 	end
-	
 	table.insert(db.s, {m = mode, n = zo_strformat("> <<1>> : <<2>>", GetString(DYER_SET_LABEL), name), d = slotDef}) -- ">" to help sorting for user
 	
 	dyesManager:RefreshData()
@@ -1336,6 +1462,7 @@ end
 
 local function RefreshDyes()
 	dyesManager:RefreshData()
+	BuildDyesAvailableForRandomness()
 end
 
 function Dyer_ClickDyeStamp(control, button)
@@ -1348,47 +1475,56 @@ function Dyer_ClickDyeStamp(control, button)
 				local secondaryDyeId = control.data.secondaryDyeId
 				local accentDyeId = control.data.accentDyeId
 				
-				local slots = ZO_Dyeing_GetSlotsForMode(DYEING.mode)
-				local activeDyeableSlot = ZO_Dyeing_GetActiveOffhandDyeableSlot()
+				local slots = ZO_Dyeing_GetSlotsForMode(ZO_RESTYLE_KEYBOARD.mode)
+				local activeDyeableSlot = ZO_Restyle_GetActiveOffhandEquipSlotType()
 				
 				for i, dyeableSlotData in ipairs(slots) do
-					local dyeableSlot = dyeableSlotData.dyeableSlot
-					if (dyeableSlot ~= DYEABLE_SLOT_OFF_HAND and dyeableSlot ~= DYEABLE_SLOT_BACKUP_OFF) or dyeableSlot == activeDyeableSlot then
-						local isPrimaryChannelDyeable, isSecondaryChannelDyeable, isAccentChannelDyeable = AreDyeableSlotDyeChannelsDyeable(dyeableSlot)
+					local restyleSlotType = dyeableSlotData:GetRestyleSlotType()
+					if not dyeableSlotData:ShouldBeHidden() then
+						
+						local restyleMode = dyeableSlotData:GetRestyleMode()
+						local restyleSetIndex = dyeableSlotData:GetRestyleSetIndex()
+						
+						local isPrimaryChannelDyeable, isSecondaryChannelDyeable, isAccentChannelDyeable = AreRestyleSlotDyeChannelsDyeable(restyleMode, restyleSetIndex, restyleSlotType)
 						local finalPrimaryDyeId = isPrimaryChannelDyeable and primaryDyeId or INVALID_DYE_ID
 						local finalSecondaryDyeId = isSecondaryChannelDyeable and secondaryDyeId or INVALID_DYE_ID
 						local finalAccentDyeId = isAccentChannelDyeable and accentDyeId or INVALID_DYE_ID
-						SetPendingSlotDyes(dyeableSlot, finalPrimaryDyeId, finalSecondaryDyeId, finalAccentDyeId)
+						SetPendingSlotDyes(restyleMode, restyleSetIndex, restyleSlotType, finalPrimaryDyeId, finalSecondaryDyeId, finalAccentDyeId)
 					end
 				end
 
 				PlaySound(SOUNDS.DYEING_RANDOMIZE_DYES)
-				DYEING:OnPendingDyesChanged()
+				ZO_RESTYLE_KEYBOARD:OnPendingDyesChanged()
 			end
 		else
-			if 2 + DYEING.mode == control.data.mode then
+			if 1 + ZO_RESTYLE_KEYBOARD.mode == control.data.mode then
 				
-				local slots = ZO_Dyeing_GetSlotsForMode(DYEING.mode)
-				local activeDyeableSlot = ZO_Dyeing_GetActiveOffhandDyeableSlot()
+				local slots = ZO_Dyeing_GetSlotsForMode(ZO_RESTYLE_KEYBOARD.mode)
 				
 				for i, dyeableSlotData in ipairs(slots) do
-					local dyeableSlot = dyeableSlotData.dyeableSlot
+					local restyleSlotType = dyeableSlotData:GetRestyleSlotType()
 					
-					local primaryDyeId = control.data.slotDef[dyeableSlot].p
-					local secondaryDyeId = control.data.slotDef[dyeableSlot].s
-					local accentDyeId = control.data.slotDef[dyeableSlot].a
+					local restyleMode = dyeableSlotData:GetRestyleMode()
+					local restyleSetIndex = dyeableSlotData:GetRestyleSetIndex()
 					
-					if (dyeableSlot ~= DYEABLE_SLOT_OFF_HAND and dyeableSlot ~= DYEABLE_SLOT_BACKUP_OFF) or dyeableSlot == activeDyeableSlot then
-						local isPrimaryChannelDyeable, isSecondaryChannelDyeable, isAccentChannelDyeable = AreDyeableSlotDyeChannelsDyeable(dyeableSlot)
+					local primaryDyeId = control.data.slotDef[restyleSlotType].p
+					local secondaryDyeId = control.data.slotDef[restyleSlotType].s
+					local accentDyeId = control.data.slotDef[restyleSlotType].a
+					
+					if not dyeableSlotData:ShouldBeHidden() then
+						
+						local isPrimaryChannelDyeable, isSecondaryChannelDyeable, isAccentChannelDyeable = AreRestyleSlotDyeChannelsDyeable(restyleMode, restyleSetIndex, restyleSlotType)
 						local finalPrimaryDyeId = isPrimaryChannelDyeable and primaryDyeId or INVALID_DYE_ID
 						local finalSecondaryDyeId = isSecondaryChannelDyeable and secondaryDyeId or INVALID_DYE_ID
 						local finalAccentDyeId = isAccentChannelDyeable and accentDyeId or INVALID_DYE_ID
-						SetPendingSlotDyes(dyeableSlot, finalPrimaryDyeId, finalSecondaryDyeId, finalAccentDyeId)
+						
+						SetPendingSlotDyes(restyleMode, restyleSetIndex, restyleSlotType, finalPrimaryDyeId, finalSecondaryDyeId, finalAccentDyeId)
+						
 					end
 				end
 
 				PlaySound(SOUNDS.DYEING_RANDOMIZE_DYES)
-				DYEING:OnPendingDyesChanged()
+				ZO_RESTYLE_KEYBOARD:OnPendingDyesChanged()
 			else
 				ZO_Alert(UI_ALERT_CATEGORY_ALERT, SOUNDS.GENERAL_ALERT_ERROR, GetString(DYER_INVALID_MODE_FOR_SET))
 			end
@@ -1411,27 +1547,27 @@ local function ToggleDyeStamps(forceHide, forceShow)
 		dyeStampsShown = false
 	elseif forceShow then
 		DyerPane:SetHidden(false)
-		ZO_DyeingTopLevelPane:SetHidden(true)
+		ZO_DyeingTopLevel_KeyboardPane:SetHidden(true)
 		dyeStampsShown = true
 	else
-		if ZO_DyeingTopLevelPane:IsHidden() then
+		if ZO_DyeingTopLevel_KeyboardPane:IsHidden() then
 			DyerPane:SetHidden(true)
-			ZO_DyeingTopLevelPane:SetHidden(false)
+			ZO_DyeingTopLevel_KeyboardPane:SetHidden(false)
 			dyeStampsShown = false
 		else
 			DyerPane:SetHidden(false)
-			ZO_DyeingTopLevelPane:SetHidden(true)
+			ZO_DyeingTopLevel_KeyboardPane:SetHidden(true)
 			dyeStampsShown = true
 		end
 	end
 	
 end
 
-local function ShowDyeStampFavoriteWindow(mode, slotFrom)
+local function ShowDyeStampFavoriteWindow(mode, slotFrom, restyleSlotData)
 	
-	if mode == FAVORITE_MODE_DYESLOT and slotFrom and slotFrom ~= DYEABLE_SLOT_NONE then
-		local primaryDyeId, secondaryDyeId, accentDyeId = GetPendingSlotDyes(slotFrom)
-		if primaryDyeId ~= INVALID_DYE_ID and secondaryDyeId ~= INVALID_DYE_ID and accentDyeId ~= INVALID_DYE_ID then
+	if mode == FAVORITE_MODE_DYESLOT then
+		if (restyleSlotData:IsEquipment() and slotFrom ~= EQUIP_SLOT_NONE) or (restyleSlotData:IsCollectible() and (slotFrom == COLLECTIBLE_CATEGORY_TYPE_COSTUME or slotFrom == COLLECTIBLE_CATEGORY_TYPE_HAT)) then
+			local primaryDyeId, secondaryDyeId, accentDyeId = restyleSlotData:GetPendingDyes()
 			ToggleDyeStamps(false, true)
 			ZO_Dialogs_ShowDialog("DYER_SAVE_DYESTAMP_SOLO", {mode = mode, primaryDyeId = primaryDyeId, secondaryDyeId = secondaryDyeId, accentDyeId = accentDyeId})
 		end
@@ -1442,32 +1578,47 @@ local function ShowDyeStampFavoriteWindow(mode, slotFrom)
 			ZO_Dialogs_ShowDialog("DYER_SAVE_DYESTAMP_SOLO", {mode = mode, primaryDyeId = primaryDyeId, secondaryDyeId = secondaryDyeId, accentDyeId = accentDyeId})
 		end
 	elseif mode == FAVORITE_MODE_WARMOR then
-		local primaryDyeId, secondaryDyeId, accentDyeId = GetPendingSlotDyes(DYEABLE_SLOT_CHEST)
+		local primaryDyeId, secondaryDyeId, accentDyeId = restyleSlotData:GetPendingDyes()
 		ToggleDyeStamps(false, true)
 		ZO_Dialogs_ShowDialog("DYER_SAVE_DYESTAMP_WHOLE", {mode = mode, primaryDyeId = primaryDyeId, secondaryDyeId = secondaryDyeId, accentDyeId = accentDyeId})
 	elseif mode == FAVORITE_MODE_WCOLLECTIBLE then
-		local primaryDyeId, secondaryDyeId, accentDyeId = GetPendingSlotDyes(DYEABLE_SLOT_COSTUME)
+		local primaryDyeId, secondaryDyeId, accentDyeId = restyleSlotData:GetPendingDyes()
 		ToggleDyeStamps(false, true)
 		ZO_Dialogs_ShowDialog("DYER_SAVE_DYESTAMP_WHOLE", {mode = mode, primaryDyeId = primaryDyeId, secondaryDyeId = secondaryDyeId, accentDyeId = accentDyeId})
 	end
 
 end
 
-function ZO_DyeingToolBase:OnRightClicked(dyeableSlot, dyeChannel)
-	if select(dyeChannel, GetPendingSlotDyes(dyeableSlot)) ~= nil then
+function ZO_DyeingToolBase:OnRightClicked(restyleSlotData, dyeChannel)
+	if select(dyeChannel, restyleSlotData:GetPendingDyes()) ~= nil then
 		ClearMenu()
 		AddMenuItem(GetString(SI_DYEING_CLEAR_MENU),
 			function()
-				SetPendingSlotDyes(dyeableSlot, zo_replaceInVarArgs(dyeChannel, INVALID_DYE_ID, GetPendingSlotDyes(dyeableSlot)))
-				self.owner:OnPendingDyesChanged(dyeableSlot)
+				restyleSlotData:SetPendingDyes(zo_replaceInVarArgs(dyeChannel, INVALID_DYE_ID, restyleSlotData:GetPendingDyes()))
+				self.owner:OnPendingDyesChanged(restyleSlotData)
 				PlaySound(SOUNDS.DYEING_TOOL_ERASE_USED)
 			end)
-		local primaryDyeId, secondaryDyeId, accentDyeId = GetPendingSlotDyes(dyeableSlot)
+		local primaryDyeId, secondaryDyeId, accentDyeId = restyleSlotData:GetPendingDyes()
 		if primaryDyeId ~= INVALID_DYE_ID and secondaryDyeId ~= INVALID_DYE_ID and accentDyeId ~= INVALID_DYE_ID then
-			AddMenuItem(GetString(DYER_ADD_SOLO_TO_DYESTAMPS), function() ShowDyeStampFavoriteWindow(FAVORITE_MODE_DYESLOT, dyeableSlot) end)
+			AddMenuItem(GetString(DYER_ADD_SOLO_TO_DYESTAMPS), function() ShowDyeStampFavoriteWindow(FAVORITE_MODE_DYESLOT, restyleSlotData:GetRestyleSlotType(), restyleSlotData) end)
 		end
-		local mode = 2 + DYEING:GetMode() -- 3/4
-		AddMenuItem(GetString(DYER_ADD_WHOLE_TO_DYESTAMPS), function() ShowDyeStampFavoriteWindow(mode) end)
+		local mode = 1 + ZO_RESTYLE_KEYBOARD.mode -- 3/4
+		AddMenuItem(GetString(DYER_ADD_WHOLE_TO_DYESTAMPS), function() ShowDyeStampFavoriteWindow(mode, nil, restyleSlotData) end)
+		
+		local randomizablePool = db.a[ZO_RESTYLE_KEYBOARD.mode]
+		if randomizablePool[restyleSlotData:GetRestyleSlotType()] and randomizablePool[restyleSlotData:GetRestyleSlotType()][dyeChannel] then
+			AddMenuItem(GetString(SI_ITEM_ACTION_UNMARK_AS_LOCKED), function()
+				randomizablePool[restyleSlotData:GetRestyleSlotType()][dyeChannel] = nil
+				ZO_RESTYLE_KEYBOARD.sheetsByMode[ZO_RESTYLE_KEYBOARD.mode].slots[restyleSlotData:GetRestyleSlotType()].dyeControls[dyeChannel].frameTexture:SetColor(1, 1, 1, 1)
+			end)
+		else
+			AddMenuItem(GetString(SI_ITEM_ACTION_MARK_AS_LOCKED), function()
+				if not randomizablePool[restyleSlotData:GetRestyleSlotType()] then randomizablePool[restyleSlotData:GetRestyleSlotType()] = {} end
+				randomizablePool[restyleSlotData:GetRestyleSlotType()][dyeChannel] = true
+				ZO_RESTYLE_KEYBOARD.sheetsByMode[ZO_RESTYLE_KEYBOARD.mode].slots[restyleSlotData:GetRestyleSlotType()].dyeControls[dyeChannel].frameTexture:SetColor(1, 0, 0, 1)
+			end)
+		end
+		
 		ShowMenu(self)
 	end
 end
@@ -1590,10 +1741,135 @@ local function BuildKeybindStrip()
 	
 end
 
+local function InitializeSlotsForRandomness()
+	for modeIndex, modeData in pairs(ZO_RESTYLE_KEYBOARD.sheetsByMode) do
+		for slotTypeIndex, slotTypeData in pairs(modeData.slots) do
+			if not db.a[modeIndex][slotTypeIndex] then db.a[modeIndex][slotTypeIndex] = {} end
+			for dyeChannelIndex, dyeChannelData in ipairs(slotTypeData.dyeControls) do
+				if db.a[modeIndex][slotTypeIndex][dyeChannelIndex] then
+					dyeChannelData.frameTexture:SetColor(1, 0, 0, 1)
+				end
+			end
+		end
+	end
+end
+
 local function BuildDyestampList()
-	DyerPane:SetParent(ZO_DyeingTopLevel)
+	DyerPane:SetParent(ZO_DyeingTopLevel_Keyboard)
 	dyesManager = dyesList:New(DyerPane)
 	dyesManager:RefreshData()
+	BuildDyesAvailableForRandomness()
+	InitializeSlotsForRandomness()
+end
+
+function ZO_DYEING_KEYBOARD:GetRandomUnlockedDyeId()
+    if #dyesAvailableForRandomness > 0 then
+        return dyesAvailableForRandomness[zo_random(1, #dyesAvailableForRandomness)]
+    end
+end
+
+local function AreDyeChannelsRandomizable(restyleMode, restyleSlotType)
+	local randomizablePool = db.a[restyleMode]
+	if randomizablePool[restyleSlotType] then
+		return not randomizablePool[restyleSlotType][1], not randomizablePool[restyleSlotType][2], not randomizablePool[restyleSlotType][3]
+	end
+	return true, true, true
+end
+
+function ZO_Dyeing_UniformRandomize(restyleMode, getRandomUnlockedDyeIdFunction)
+	
+	local primaryDyeId = getRandomUnlockedDyeIdFunction()
+	local secondaryDyeId = getRandomUnlockedDyeIdFunction()
+	local accentDyeId = getRandomUnlockedDyeIdFunction()
+	
+	local slots = ZO_Dyeing_GetSlotsForMode(restyleMode)
+	
+	for i, dyeableSlotData in ipairs(slots) do
+		if not dyeableSlotData:ShouldBeHidden() then
+			local restyleSlotType = dyeableSlotData:GetRestyleSlotType()
+				
+			local isPrimaryChannelDyeable, isSecondaryChannelDyeable, isAccentChannelDyeable = dyeableSlotData:AreDyeChannelsDyeable()
+			local isPrimaryChannelRandomizable, isSecondaryRandomizable, isAccentChannelRandomizable = AreDyeChannelsRandomizable(restyleMode, restyleSlotType)
+			local actualPrimaryDyeId, actualSecondaryDyeId, actualAccentDyeId = dyeableSlotData:GetPendingDyes()
+			local finalPrimaryDyeId, finalSecondaryDyeId, finalAccentDyeId
+			
+			if isPrimaryChannelDyeable then
+				finalPrimaryDyeId = isPrimaryChannelRandomizable and primaryDyeId or actualPrimaryDyeId
+			else
+				finalPrimaryDyeId = INVALID_DYE_ID
+			end
+
+			if isSecondaryChannelDyeable then
+				finalSecondaryDyeId = isSecondaryRandomizable and secondaryDyeId or actualSecondaryDyeId
+			else
+				finalSecondaryDyeId = INVALID_DYE_ID
+			end
+
+			if isAccentChannelDyeable then
+				finalAccentDyeId = isAccentChannelRandomizable and accentDyeId or actualAccentDyeId
+			else
+				finalAccentDyeId = INVALID_DYE_ID
+			end
+			
+			dyeableSlotData:SetPendingDyes(finalPrimaryDyeId, finalSecondaryDyeId, finalAccentDyeId)
+			
+		end
+	end
+	
+	PlaySound(SOUNDS.DYEING_RANDOMIZE_DYES)
+	return primaryDyeId, secondaryDyeId, accentDyeId
+	
+end
+
+local function ConvertDBToRestyleSystem()
+
+	if not db.convertedToRestyle then
+		
+		local DYEABLE_SLOT_BACKUP_OFF = 8
+		local DYEABLE_SLOT_CHEST = 1
+		local DYEABLE_SLOT_FEET = 5
+		local DYEABLE_SLOT_HAND	= 6
+		local DYEABLE_SLOT_HEAD = 0
+		local DYEABLE_SLOT_LEGS = 4
+		local DYEABLE_SLOT_OFF_HAND = 7
+		local DYEABLE_SLOT_SHOULDERS = 2
+		local DYEABLE_SLOT_WAIST = 3
+		
+		for entryIndex, entryData in ipairs(db.s) do
+		
+			if entryData.m == FAVORITE_MODE_WARMOR then
+				
+				local newData = {
+					[EQUIP_SLOT_OFF_HAND] = entryData.d[DYEABLE_SLOT_OFF_HAND],
+					[EQUIP_SLOT_BACKUP_OFF] = entryData.d[DYEABLE_SLOT_BACKUP_OFF],
+					[EQUIP_SLOT_CHEST] = entryData.d[DYEABLE_SLOT_CHEST],
+					[EQUIP_SLOT_FEET] = entryData.d[DYEABLE_SLOT_FEET],
+					[EQUIP_SLOT_HAND] = entryData.d[DYEABLE_SLOT_HAND],
+					[EQUIP_SLOT_HEAD] = entryData.d[DYEABLE_SLOT_HEAD],
+					[EQUIP_SLOT_LEGS] = entryData.d[DYEABLE_SLOT_LEGS],
+					[EQUIP_SLOT_SHOULDERS] = entryData.d[DYEABLE_SLOT_SHOULDERS],
+					[EQUIP_SLOT_WAIST] = entryData.d[DYEABLE_SLOT_WAIST],
+				}
+				
+				entryData.d = newData
+				
+			elseif entryData.m == FAVORITE_MODE_WCOLLECTIBLE then
+			
+				local newData = {
+					[COLLECTIBLE_CATEGORY_TYPE_HAT] = entryData.d[DYEABLE_SLOT_HAT],
+					[COLLECTIBLE_CATEGORY_TYPE_COSTUME] = entryData.d[DYEABLE_SLOT_COSTUME],
+				}
+				
+				entryData.d = newData
+			
+			end
+			
+		end
+		
+		db.convertedToRestyle = true
+		
+	end
+			
 end
 
 local function OnAddonLoaded(_, addon)
@@ -1601,6 +1877,8 @@ local function OnAddonLoaded(_, addon)
 	if addon == ADDON_NAME then
 		
 		db = ZO_SavedVars:NewAccountWide('DYER', 1, nil, defaults)
+		
+		ConvertDBToRestyleSystem()
 		
 		BuildSaveFavoriteDialog()
 		BuildKeybindStrip()
@@ -1610,7 +1888,7 @@ local function OnAddonLoaded(_, addon)
 			return true
 		end
 		
-		DYEING_SCENE:RegisterCallback("StateChange", function(oldState, newState)
+		KEYBOARD_DYEING_FRAGMENT:RegisterCallback("StateChange", function(oldState, newState)
 			if newState == SCENE_SHOWING then
 				KEYBIND_STRIP:AddKeybindButtonGroup(rightKeybindStripDescriptor)
 			elseif newState == SCENE_HIDDEN then
@@ -1618,6 +1896,8 @@ local function OnAddonLoaded(_, addon)
 				ToggleDyeStamps(true)
 			end
 		end)
+		
+		ZO_DYEING_MANAGER:RegisterCallback("UpdateSearchResults", UpdateDyeStampsLayout)
 		
 		EVENT_MANAGER:RegisterForEvent(ADDON_NAME, EVENT_UNLOCKED_DYES_UPDATED, RefreshDyes)
 		EVENT_MANAGER:UnregisterForEvent(ADDON_NAME, EVENT_ADD_ON_LOADED)

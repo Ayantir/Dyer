@@ -7,8 +7,8 @@
 ## Title: Dyer
 ## Description: Be pretty !
 ## Author: Ayantir
-## Version: 11
-## APIVersion: 100020 100021
+## Version: 12
+## APIVersion: 100021
 ## SavedVariables: DYER
 
 lang/en.lua
