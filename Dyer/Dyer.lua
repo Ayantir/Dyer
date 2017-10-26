@@ -1834,6 +1834,8 @@ local function ConvertDBToRestyleSystem()
 		local DYEABLE_SLOT_OFF_HAND = 7
 		local DYEABLE_SLOT_SHOULDERS = 2
 		local DYEABLE_SLOT_WAIST = 3
+		local DYEABLE_SLOT_HAT = 10
+		local DYEABLE_SLOT_COSTUME = 9
 		
 		for entryIndex, entryData in ipairs(db.s) do
 		
